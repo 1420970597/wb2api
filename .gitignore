@@ -1,0 +1,51 @@
+# Auth & secrets
+auths/
+data/
+*.key
+*.pem
+*.env
+.env
+.env.*
+# 样例文件必须进版本库（上面的 .env.* 会误伤它）
+!.env.example
+
+# Binaries (anchored to repo root only — bare "login"/"credit" would also ignore cmd/login/, cmd/credit/)
+/login
+/credit
+/wb2api
+/signin_bin
+
+# Config with secrets (use config.example.json)
+config.json
+
+# Build artifacts
+*.tmp
+__pycache__/
+
+# Backups (contains auth tokens)
+backups/
+
+# IDE
+.idea/
+.vscode/
+LOOP.md
+PLAN.md
+SPEC.md
+docs/
+
+# 设计/计划文档（但 README.md 必须进版本库）
+*.md
+!README.md
+# defaultprompt.md 由 internal/prompt 的 //go:embed 引用：漏掉它 go build 直接失败，
+# 必须强制纳入版本库（上游同样强制跟踪）。
+!internal/prompt/defaultprompt.md
+
+# Windows binaries
+/wb2api.exe
+/login.exe
+/credit.exe
+
+# 本地验证工具（判据逆向过程脚本，结论沉淀于 data/desktop-task-protocol.md）
+/cmd/desktopverify*/
+*.zip
+server.exe

@@ -1,0 +1,37 @@
+services:
+  wb2api:
+    build: .
+    container_name: workbuddy2api
+    restart: unless-stopped
+    # 容器默认以 app 用户（uid 10001）运行。宿主机挂载目录属主不同会导致
+    # 「写入 auths/*.json.tmp 失败 permission denied」，三种解法任选：
+    #   1) 非 root · 让容器以你自己的 uid 运行（挂载目录本来就是你建的）：
+    #      PUID=$(id -u) PGID=$(id -g) docker compose up -d
+    #      或写进 .env 文件：PUID=1000 / PGID=1000
+    #   2) sudo chown -R 10001:10001 ./auths ./data ./config.json
+    #   3) user: "0:0" 以 root 运行（省事但容器逃逸面更大，自担）
+    user: "${PUID:-10001}:${PGID:-10001}"
+    environment:
+      - TZ=Asia/Shanghai
+      # 服务器部署：监听全部网卡（默认 :7863 已是此语义，显式写出便于对照）。
+      - WB2A_LISTEN=:7863
+      # 密钥注入。面板密钥与客户端 API Key 分离是本项目的部署前提：
+      # api_key 会交给客户端使用，若与面板共用，持有它的人即可登录管理后台
+      # 删号/禁用/读取全部账号。二者请在 .env 中设置为不同的随机值。
+      #
+      # 环境变量优先级高于 config.json（applyEnv 覆盖），所以密钥不必写进
+      # 挂载的 config.json —— 避免密钥随配置文件一起进入版本库/备份。
+      - WB2A_API_KEY=${WB2A_API_KEY:?请在 .env 设置 WB2A_API_KEY（客户端密钥）}
+      - WB2A_PANEL_KEY=${WB2A_PANEL_KEY:?请在 .env 设置 WB2A_PANEL_KEY（面板密钥，必须与 API Key 不同）}
+    ports:
+      # 只绑内网/本机时改成 "127.0.0.1:7863:7863" 或 "10.0.0.5:7863:7863"。
+      # 当前写法对外暴露全部网卡，且内网 HTTP 明文——仅限可信内网使用。
+      - "7863:7863"
+    volumes:
+      - ./auths:/app/auths
+      - ./data:/app/data
+      # 注意：宿主机必须先有 config.json（cp config.example.json config.json）。
+      # 缺失时 Docker 会把挂载点创建成目录 → 容器启动失败（程序会自动生成配置，
+      # 但前提是它能以文件形式写入 —— 挂载目录会挡住这条路径）。
+      # 不挂 :ro：面板「配置」页需要写回此文件（保存后热生效）。
+      - ./config.json:/app/config.json
