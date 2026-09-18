@@ -1,12 +1,12 @@
-// global 模型目录探测：纯动态产出模型名及其窗口 / 能力元数据（v3-config-merge）。
+// global 模型目录探测：目标目录固定为已验证的 19 个模型；上游探测只补充实时元数据。
 //
 // 探测两路并发：/v3/config（主路，IDE UA 完整能力版）+ 企业端点家族
 // （/v2 → /console 补缺），并集 = v3 条目为主、企业端点补 v3 缺失的 id
 // （如 gpt-5.3-codex 只在 /v2 下发）。倍率字段（credits）虽随目录下发，但
 // 只透出展示，不注入 costTier、不参与选号。
 //
-// 纯动态：不再回落任何静态名单——拉不出目录即意味着该域上游不可用，
-// 假名单只会让客户端选到 11102 的模型（产品决策：无兜底）。
+// 上游目录偶发失败时仍返回这份已验证目录，避免客户端与管理面板的模型选择器
+// 因一次目录请求失败而清空。实际请求仍由 global 账号路由，账号不可用时不会被选号。
 package upstream
 
 import (
@@ -23,31 +23,124 @@ import (
 	"github.com/linguo2625469/workbuddy2api-panel/internal/auth"
 )
 
-// GlobalModelNames 国际版（global realm）历史静态名单（PLAN §7.2 附录 21 名）。
-// 纯动态化后**不再作为模型目录的基底/兜底**：/v1/models 只透出上游实际下发的模型。
-// 保留仅作历史对照（global e2e 观测日志差集参照）。
+// GlobalModelNames 国际版（global realm）的已验证目录。顺序就是面板展示顺序。
 var GlobalModelNames = []string{
 	"default-model",
 	"fast-model",
 	"balanced-model",
 	"primary-model",
+	"deep-model",
 	"hy4-preview",
+	"hy3",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
-	"deep-model",
-	"deepseek-v4.1-flash",
-	"gpt-6-astra",
-	"hy4-preview-f",
-	"hy3",
-	"glm-5.2",
 	"gpt-5.6-luna",
 	"gpt-5.5",
 	"gpt-5.4",
 	"gpt-5.3-codex",
 	"gemini-3.5-flash",
 	"glm-5.3",
+	"glm-5.2",
 	"kimi-k3",
 	"kimi-k2.6",
+	"deepseek-v4.1-flash",
+}
+
+// globalModelCatalog 是目标目录的展示与能力兜底。数值来自已验证的 global
+// 模型能力页；远端成功返回时由 overlayGlobalCatalog 以远端非空字段补充。
+var globalModelCatalog = []ModelInfo{
+	{ID: "default-model", Name: "Auto", ContextWindow: 176000, MaxTokens: 24000, Credits: "x0.79 credits"},
+	{ID: "fast-model", Name: "Fast", ContextWindow: 200000, MaxTokens: 32000, Credits: "x0.34 credits", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "balanced-model", Name: "Balanced", ContextWindow: 256000, MaxTokens: 32000, Credits: "x0.59 credits", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "primary-model", Name: "Primary", ContextWindow: 272000, MaxTokens: 72000, Credits: "x3.31 credits", SupportsReasoning: true, Efforts: []string{"high"}, DefaultEffort: "high"},
+	{ID: "deep-model", Name: "Deep", ContextWindow: 176000, MaxTokens: 24000, Credits: "x3.33 credits"},
+	{ID: "hy4-preview", Name: "Hy4 preview", ContextWindow: 1000000, MaxTokens: 64000, Credits: "x0.00", SupportsReasoning: true, Efforts: []string{"high"}, DefaultEffort: "high"},
+	{ID: "hy3", Name: "Hy3", ContextWindow: 192000, MaxTokens: 64000, Credits: "x0.00", SupportsReasoning: true, Efforts: []string{"low", "high"}, DefaultEffort: "high"},
+	{ID: "gpt-5.6-sol", Name: "GPT-5.6-Sol", ContextWindow: 1000000, MaxTokens: 128000, Credits: "x3.47", SupportsReasoning: true, CanDisableThinking: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultEffort: "high"},
+	{ID: "gpt-5.6-terra", Name: "GPT-5.6-Terra", ContextWindow: 1000000, MaxTokens: 128000, Credits: "x1.39", SupportsReasoning: true, CanDisableThinking: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultEffort: "high"},
+	{ID: "gpt-5.6-luna", Name: "GPT-5.6-Luna", ContextWindow: 1000000, MaxTokens: 128000, Credits: "x0.14", SupportsReasoning: true, CanDisableThinking: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultEffort: "high"},
+	{ID: "gpt-5.5", Name: "GPT-5.5", ContextWindow: 1000000, MaxTokens: 128000, Credits: "x3.31", SupportsReasoning: true, Efforts: []string{"low", "medium", "high", "xhigh"}, DefaultEffort: "high"},
+	{ID: "gpt-5.4", Name: "GPT-5.4", ContextWindow: 272000, MaxTokens: 72000, Credits: "x1.65", SupportsReasoning: true, Efforts: []string{"low", "medium", "high", "xhigh"}, DefaultEffort: "high"},
+	{ID: "gpt-5.3-codex", Name: "GPT-5.3-Codex", ContextWindow: 272000, MaxTokens: 72000, Credits: "x1.25", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "gemini-3.5-flash", Name: "Gemini-3.5-Flash", ContextWindow: 1000000, MaxTokens: 66000, Credits: "x0.99", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "glm-5.3", Name: "GLM-5.3", ContextWindow: 1000000, MaxTokens: 48000, Credits: "x0.79", SupportsReasoning: true, CanDisableThinking: true, Efforts: []string{"low", "high", "max"}, DefaultEffort: "high"},
+	{ID: "glm-5.2", Name: "GLM-5.2", ContextWindow: 1000000, MaxTokens: 48000, Credits: "x0.79", SupportsReasoning: true, CanDisableThinking: true, Efforts: []string{"high", "xhigh"}, DefaultEffort: "high"},
+	{ID: "kimi-k3", Name: "Kimi-K3", ContextWindow: 1000000, MaxTokens: 32000, Credits: "x1.62", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "kimi-k2.6", Name: "Kimi-K2.6", ContextWindow: 256000, MaxTokens: 32000, Credits: "x0.52", SupportsReasoning: true, Efforts: []string{"medium"}, DefaultEffort: "medium"},
+	{ID: "deepseek-v4.1-flash", Name: "Deepseek-V4.1-Flash", ContextWindow: 1000000, MaxTokens: 128000, Credits: "x0.03 credits", SupportsReasoning: true, Efforts: []string{"high"}, DefaultEffort: "high"},
+}
+
+// GlobalModelInfos 返回目录的独立副本，避免调用方修改共享切片。
+func GlobalModelInfos() []ModelInfo {
+	out := make([]ModelInfo, len(globalModelCatalog))
+	for i, mi := range globalModelCatalog {
+		out[i] = cloneModelInfo(mi)
+	}
+	return out
+}
+
+func cloneModelInfo(mi ModelInfo) ModelInfo {
+	mi.Efforts = append([]string(nil), mi.Efforts...)
+	mi.Tags = append([]string(nil), mi.Tags...)
+	return mi
+}
+
+// overlayGlobalCatalog 保持目标目录与顺序不变，仅用远端返回的非空字段刷新元数据。
+func overlayGlobalCatalog(remote []ModelInfo) []ModelInfo {
+	byID := make(map[string]ModelInfo, len(remote))
+	for _, mi := range remote {
+		byID[mi.ID] = mi
+	}
+	out := GlobalModelInfos()
+	for i, base := range out {
+		got, ok := byID[base.ID]
+		if !ok {
+			continue
+		}
+		if got.Name != "" {
+			out[i].Name = got.Name
+		}
+		if got.ContextWindow > 0 {
+			out[i].ContextWindow = got.ContextWindow
+		}
+		if got.MaxTokens > 0 {
+			out[i].MaxTokens = got.MaxTokens
+		}
+		if len(got.Efforts) > 0 {
+			out[i].Efforts = append([]string(nil), got.Efforts...)
+		}
+		if got.DefaultEffort != "" {
+			out[i].DefaultEffort = got.DefaultEffort
+		}
+		if got.Description != "" {
+			out[i].Description = got.Description
+		}
+		if got.Credits != "" {
+			out[i].Credits = got.Credits
+		}
+		if len(got.Tags) > 0 {
+			out[i].Tags = append([]string(nil), got.Tags...)
+		}
+		if got.Vendor != "" {
+			out[i].Vendor = got.Vendor
+		}
+		if got.MaxAllowedSize > 0 {
+			out[i].MaxAllowedSize = got.MaxAllowedSize
+		}
+		if got.ReasoningEffort != "" {
+			out[i].ReasoningEffort = got.ReasoningEffort
+		}
+		if got.ReasoningSummary != "" {
+			out[i].ReasoningSummary = got.ReasoningSummary
+		}
+		out[i].IsDefault = out[i].IsDefault || got.IsDefault
+		out[i].SupportsReasoning = out[i].SupportsReasoning || got.SupportsReasoning
+		out[i].SupportsToolCall = out[i].SupportsToolCall || got.SupportsToolCall
+		out[i].OnlyReasoning = out[i].OnlyReasoning || got.OnlyReasoning
+		out[i].SupportsImages = out[i].SupportsImages || got.SupportsImages
+		out[i].CanDisableThinking = out[i].CanDisableThinking || got.CanDisableThinking
+	}
+	return out
 }
 
 // fetchGlobalModelsCache 探测结果缓存（语义参照 CN 侧 handler.dynamicModelsCache：1h TTL +
@@ -76,10 +169,8 @@ var globalModelsProbePaths = []string{
 	"/console/enterprises/personal/models",
 }
 
-// FetchGlobalModels 探测 global 账号的模型名目录并返回**模型名列表**（无元数据）。
-//
-// 纯动态：成功返回并集结果（去重），缓存 1h；失败（两路全非 2xx / 解析失败 /
-// 空列表）记 5min 负缓存，返回 nil（无静态回落）。缓存/负缓存命中：直接返回，零上游调用。
+// FetchGlobalModels 返回 global 账号的目标模型目录。远端目录成功时更新元数据；
+// 失败则回落到已验证的 19 个模型，并在 5 分钟后重试探测。
 //
 // 调用方负责：仅在有 global 账号时调用（无则不探测）；GlobalEnabled 关闭时（逃生门）
 // 不得调用——本方法由 globalOn(a) 内部兜底，若账号因开关回落 cn 则返回 nil。
@@ -99,8 +190,7 @@ func (c *Client) FetchGlobalModelInfos(a *auth.Auth) []ModelInfo {
 }
 
 // fetchGlobalModelsOnce 单次探测决策（缓存命中/负缓存/触发探测），返回 (names, infos)。
-// 纯动态：成功 = 并集结果去重；一切失败 = nil（不回落静态）。
-// infos 仅对象形态成功探测时非 nil。
+// 目录始终是目标 19 模型；infos 是静态能力表，远端对象形态成功时用非空字段覆盖。
 func (c *Client) fetchGlobalModelsOnce(a *auth.Auth) (names []string, infos []ModelInfo) {
 	if !c.globalOn(a) {
 		// 逃生门兜底：账号不路由 global 上游 → 不探测（零上游调用）。
@@ -108,27 +198,30 @@ func (c *Client) fetchGlobalModelsOnce(a *auth.Auth) (names []string, infos []Mo
 	}
 
 	c.globalModels.Lock()
-	if len(c.globalModels.names) > 0 && time.Since(c.globalModels.fetched) < globalModelsTTL {
+	if len(c.globalModels.names) > 0 && c.globalModels.lastFail.IsZero() && time.Since(c.globalModels.fetched) < globalModelsTTL {
 		names, infos := c.globalModels.names, c.globalModels.infos
 		c.globalModels.Unlock()
 		return names, infos
 	}
 	if !c.globalModels.lastFail.IsZero() && time.Since(c.globalModels.lastFail) < globalModelsFailCooldown {
-		// 负缓存冷却期内：避免反复打上游，直接按失败处理（无静态回落）。
+		// 负缓存冷却期内：避免反复打上游，仍返回内置目标目录。
+		names, infos := c.globalModels.names, c.globalModels.infos
 		c.globalModels.Unlock()
-		return nil, nil
+		return names, infos
 	}
 	c.globalModels.Unlock()
 
-	names, infos, efforts, defaults, err := c.probeGlobalModels(a)
-	if err != nil || len(names) == 0 {
-		// 探测失败：负缓存 + 返回 nil（effort 桶不写，prepareBody 走 globalEffortMap 静态兜底）。
+	_, remoteInfos, efforts, defaults, err := c.probeGlobalModels(a)
+	if err != nil {
+		// 探测失败：负缓存，但目录保持可用。prepareBody 仍走静态 effort 兜底。
 		c.globalModels.Lock()
 		c.globalModels.lastFail = time.Now()
-		c.globalModels.names = nil
-		c.globalModels.infos = nil
+		c.globalModels.names = append([]string(nil), GlobalModelNames...)
+		c.globalModels.infos = GlobalModelInfos()
+		c.globalModels.fetched = time.Now()
+		names, infos = c.globalModels.names, c.globalModels.infos
 		c.globalModels.Unlock()
-		return nil, nil
+		return names, infos
 	}
 	// global 域 effort 能力：探测下发的 supportedEfforts/defaultEffort 权威写入 global 桶
 	// （raw remote，不并入静态表——静态兜底在 prepareBody 的 globalEffortMap 与
@@ -137,25 +230,14 @@ func (c *Client) fetchGlobalModelsOnce(a *auth.Auth) (names []string, infos []Mo
 		c.storeEfforts("global", efforts, defaults)
 	}
 
-	// 成功：探测结果去重。names/infos 均落缓存；倍率等选号敏感字段只透出展示，
-	// 不注入 costTier。
-	seen := make(map[string]bool, len(names))
-	merged := make([]string, 0, len(names))
-	for _, id := range names {
-		if id == "" || seen[id] {
-			continue
-		}
-		seen[id] = true
-		merged = append(merged, id)
-	}
-
 	c.globalModels.Lock()
-	c.globalModels.names = merged
-	c.globalModels.infos = infos
+	c.globalModels.names = append([]string(nil), GlobalModelNames...)
+	c.globalModels.infos = overlayGlobalCatalog(remoteInfos)
 	c.globalModels.fetched = time.Now()
 	c.globalModels.lastFail = time.Time{}
+	names, infos = c.globalModels.names, c.globalModels.infos
 	c.globalModels.Unlock()
-	return merged, infos
+	return names, infos
 }
 
 // probeGlobalModels 发起一次 global 模型目录探测（v3-config-merge）：

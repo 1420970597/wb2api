@@ -45,24 +45,25 @@ var cnEffortFallback = map[string]effortCap{
 // 注意 deepseek-v4.1-flash 在国际版**只有 ['high']**（product.ts:190 实测 IDE 缓存），
 // 与 CN 面的三档刻意不同——往 WorkBuddy 上游发 low/max 是非法参数 400。
 var globalEffortFallback = map[string]effortCap{
-	"fast-model":          {efforts: []string{"medium"}},
-	"balanced-model":      {efforts: []string{"medium"}},
-	"primary-model":       {efforts: []string{"high"}},
+	"fast-model":          {efforts: []string{"medium"}, defaultEffort: "medium"},
+	"balanced-model":      {efforts: []string{"medium"}, defaultEffort: "medium"},
+	"primary-model":       {efforts: []string{"high"}, defaultEffort: "high"},
+	"hy4-preview":         {efforts: []string{"high"}, defaultEffort: "high"},
 	"hy4-preview-f":       {efforts: []string{"high"}, defaultEffort: "high"},
 	"hy3":                 {efforts: []string{"low", "high"}, defaultEffort: "high"},
-	"deepseek-v4.1-flash": {efforts: []string{"high"}},
+	"deepseek-v4.1-flash": {efforts: []string{"high"}, defaultEffort: "high"},
 	"gpt-6-astra":         {efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"},
 	"gpt-5.6-sol":         {efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"},
 	"gpt-5.6-terra":       {efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"},
 	"gpt-5.6-luna":        {efforts: []string{"low", "medium", "high", "xhigh", "max"}, defaultEffort: "high"},
 	"gpt-5.5":             {efforts: []string{"low", "medium", "high", "xhigh"}, defaultEffort: "high"},
 	"gpt-5.4":             {efforts: []string{"low", "medium", "high", "xhigh"}, defaultEffort: "high"},
-	"gpt-5.3-codex":       {efforts: []string{"medium"}},
-	"gemini-3.5-flash":    {efforts: []string{"medium"}},
+	"gpt-5.3-codex":       {efforts: []string{"medium"}, defaultEffort: "medium"},
+	"gemini-3.5-flash":    {efforts: []string{"medium"}, defaultEffort: "medium"},
 	"glm-5.3":             {efforts: []string{"low", "high", "max"}, defaultEffort: "high"},
 	"glm-5.2":             {efforts: []string{"high", "xhigh"}, defaultEffort: "high"},
-	"kimi-k3":             {efforts: []string{"medium"}},
-	"kimi-k2.6":           {efforts: []string{"medium"}},
+	"kimi-k3":             {efforts: []string{"medium"}, defaultEffort: "medium"},
+	"kimi-k2.6":           {efforts: []string{"medium"}, defaultEffort: "medium"},
 }
 
 // staticEffortCap 按 realm 取静态兜底条目；未命中返回 zero effortCap（efforts=nil）。

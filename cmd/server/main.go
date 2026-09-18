@@ -145,9 +145,16 @@ func main() {
 	up.ClientVersion = cfg.Upstream.ClientVersion
 	up.CliVersion = cfg.Upstream.CliVersion
 	up.ClientName = cfg.Upstream.ClientName
+	up.LegacyProfile = cfg.Upstream.LegacyProfile
 	up.DeviceToken = cfg.Upstream.DeviceToken
 	up.DeviceTokenFile = cfg.Upstream.DeviceTokenFile
 	up.PassthroughIP = cfg.Upstream.PassthroughIP
+	if err := up.SetProxyURL(cfg.Upstream.ProxyURL); err != nil {
+		log.Fatalf("configure upstream proxy: %v", err)
+	}
+	if cfg.Upstream.ProxyURL != "" {
+		log.Printf("upstream HTTP(S) proxy enabled")
+	}
 	// global realm 路由（config global 段）：上游侧开关（第一道闸）+ base 覆盖；
 	// auth 侧开关（auth.SetGlobalEnabled）是第二道闸，两者同 config global.enabled。
 	up.GlobalEnabled = cfg.Global.Enabled
@@ -370,11 +377,19 @@ func saveConfig(raw []byte, path string, live *livecfg.Holder, p *pool.Pool, up 
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
 	tmp := path + ".tmp"
+	defer os.Remove(tmp)
 	if err := os.WriteFile(tmp, out, 0o600); err != nil {
 		return nil, fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return nil, fmt.Errorf("replace config: %w", err)
+		// Docker 单文件 bind mount 是挂载点，不能被 rename(2) 原子替换
+		// （EBUSY）。普通文件仍使用原子替换；仅该场景原地覆盖。
+		if !errors.Is(err, syscall.EBUSY) {
+			return nil, fmt.Errorf("replace config: %w", err)
+		}
+		if err := os.WriteFile(path, out, 0o600); err != nil {
+			return nil, fmt.Errorf("replace bind-mounted config: %w", err)
+		}
 	}
 
 	// 4) 热应用：能立即生效的字段全部应用，并列出仍需重启的字段。

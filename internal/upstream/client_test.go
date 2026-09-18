@@ -235,6 +235,40 @@ func TestChatStreamSendsHeadersAndStreamTrue(t *testing.T) {
 	}
 }
 
+func TestLegacyProfileMatchesWindowsExeChatIdentity(t *testing.T) {
+	var got http.Header
+	c := testClient(func(r *http.Request) (*http.Response, error) {
+		got = r.Header.Clone()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+		}, nil
+	})
+	c.LegacyProfile = true
+	a := &auth.Auth{AccessToken: "at", UID: "u1", EnterpriseID: "e1"}
+	rc, status, _, err := c.ChatStream(a, []byte(`{"model":"glm-5.2","messages":[]}`), "", ChatMeta{})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("chat: status=%d err=%v", status, err)
+	}
+	rc.Close()
+
+	if got.Get("User-Agent") != legacyUserAgent {
+		t.Errorf("User-Agent=%q want %q", got.Get("User-Agent"), legacyUserAgent)
+	}
+	if got.Get("X-Product") != "SaaS" {
+		t.Errorf("X-Product=%q want SaaS", got.Get("X-Product"))
+	}
+	for _, name := range []string{"X-Agent-Purpose", "X-IDE-Name", "X-IDE-Type", "X-IDE-Version", "X-Machine-ID", "X-Session-ID"} {
+		if got.Get(name) != "" {
+			t.Errorf("%s=%q should be absent in legacy profile", name, got.Get(name))
+		}
+	}
+	if got.Get("X-CodeBuddy-Request") != "1" {
+		t.Errorf("X-CodeBuddy-Request=%q want 1", got.Get("X-CodeBuddy-Request"))
+	}
+}
+
 func TestFetchModelsEffortsDriveBodyDowngrade(t *testing.T) {
 	var outbound []byte
 	c := testClient(func(r *http.Request) (*http.Response, error) {
@@ -569,5 +603,40 @@ func TestFetchModelsOverlaysV3ConfigCapabilities(t *testing.T) {
 	}
 	if got := strings.Join(mi.Efforts, ","); got != "low,high,max" {
 		t.Errorf("Efforts=%v want low,high,max", mi.Efforts)
+	}
+}
+
+func TestFetchGlobalModelsFallsBackToTargetCatalog(t *testing.T) {
+	a := &auth.Auth{AccessToken: "at", UID: "global-1", Domain: "www.workbuddy.ai"}
+	c := New()
+	c.ChatBaseGlobal = "https://fake.example"
+	c.HTTP = &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"code":500,"msg":"unavailable"}`)),
+		}, nil
+	})}
+
+	names := c.FetchGlobalModels(a)
+	if len(names) != 19 {
+		t.Fatalf("fallback model count=%d want 19: %v", len(names), names)
+	}
+	if names[0] != "default-model" || names[len(names)-1] != "deepseek-v4.1-flash" {
+		t.Fatalf("fallback order=%v", names)
+	}
+	infos := c.FetchGlobalModelInfos(a)
+	if len(infos) != len(names) {
+		t.Fatalf("fallback info count=%d want %d", len(infos), len(names))
+	}
+	byID := make(map[string]ModelInfo, len(infos))
+	for _, mi := range infos {
+		byID[mi.ID] = mi
+	}
+	if mi := byID["gpt-5.4"]; mi.ContextWindow != 272000 || mi.MaxTokens != 72000 || mi.Credits != "x1.65" {
+		t.Errorf("gpt-5.4 fallback=%+v", mi)
+	}
+	if mi := byID["deepseek-v4.1-flash"]; mi.DefaultEffort != "high" || len(mi.Efforts) != 1 || mi.Efforts[0] != "high" || mi.MaxTokens != 128000 {
+		t.Errorf("deepseek fallback=%+v", mi)
 	}
 }

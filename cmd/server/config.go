@@ -100,11 +100,16 @@ type Config struct {
 		// ClientName 用量归属头取值（X-Product / X-IDE-Name / X-IDE-Type / X-IDE-Version）。
 		// 空 = 旧行为 X-Product="SaaS" 不设 X-IDE-*；配 "WorkBuddy" 则四头跟随。
 		ClientName string `json:"client_name"`
+		// LegacyProfile 对齐随项目附带的 Windows wb2api.exe 出站身份：旧 UA、SaaS
+		// 归属，且不发由网关派生的 X-Machine-ID/X-Session-ID。
+		LegacyProfile bool `json:"legacy_profile"`
 		// DeviceToken 设备风控 Token（X-Device-Token 头）全局兜底；空 = 不注入。
 		// 每号 auth 文件的 device_token 键优先于本项。
 		DeviceToken string `json:"device_token"`
 		// DeviceTokenFile device token 文件路径兜底（宿主落盘的桌面端 token，5 分钟读取缓存）。
 		DeviceTokenFile string `json:"device_token_file"`
+		// ProxyURL 上游 HTTP(S) 代理 URL。空 = 直连；认证信息应只放在受限配置或环境变量中。
+		ProxyURL string `json:"proxy_url"`
 		// PassthroughIP 是否透传客户端 IP 给上游（默认 false，反代安全边界）。
 		PassthroughIP bool `json:"passthrough_ip"`
 	} `json:"upstream"`
@@ -363,11 +368,19 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("WB2A_CLIENT_NAME"); v != "" {
 		c.Upstream.ClientName = v
 	}
+	if v := os.Getenv("WB2A_LEGACY_PROFILE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.Upstream.LegacyProfile = b
+		}
+	}
 	if v := os.Getenv("WB2A_DEVICE_TOKEN"); v != "" {
 		c.Upstream.DeviceToken = v
 	}
 	if v := os.Getenv("WB2A_DEVICE_TOKEN_FILE"); v != "" {
 		c.Upstream.DeviceTokenFile = v
+	}
+	if v := os.Getenv("WB2A_PROXY_URL"); v != "" {
+		c.Upstream.ProxyURL = v
 	}
 	if v := os.Getenv("WB2A_PASSTHROUGH_IP"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {

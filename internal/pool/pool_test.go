@@ -1285,6 +1285,41 @@ func TestFallbackSkipsHardCooldown(t *testing.T) {
 	}
 }
 
+func TestFallbackSkipsActiveWAFCooldown(t *testing.T) {
+	// WAF 是网关出口/请求画像的频控信号。全池均冷却时也不能把该账号作为
+	// earliest-expiry 半开探测，否则每次客户端重试都会再向上游发送一次请求。
+	p := New("")
+	p.Add(&auth.Auth{UID: "waf"})
+	p.Cooldown("waf", CoolSoft, time.Hour, "waf 403 block")
+	if got := p.Pick(); got != nil {
+		t.Fatalf("active WAF cooldown must not be fallback-picked, got %+v", got)
+	}
+}
+
+func TestFallbackPrefersOrdinarySoftCooldownOverWAF(t *testing.T) {
+	// 普通 429 仍保持既有 earliest-expiry 兜底语义；只排除已确认 WAF 的账号。
+	p := New("")
+	p.Add(&auth.Auth{UID: "waf"})
+	p.Add(&auth.Auth{UID: "rate"})
+	p.Cooldown("waf", CoolSoft, time.Minute, "waf 403 block")
+	p.Cooldown("rate", CoolSoft, 2*time.Hour, "429 rate limit")
+	got := p.Pick()
+	if got == nil || got.UID != "rate" {
+		t.Fatalf("ordinary soft cooldown should remain eligible for fallback, got %+v", got)
+	}
+}
+
+func TestFallbackAllowsExpiredWAFCooldown(t *testing.T) {
+	p := New("")
+	p.Add(&auth.Auth{UID: "waf"})
+	p.Cooldown("waf", CoolSoft, time.Hour, "waf 403 block")
+	expireCooldown(p, "waf")
+	got := p.Pick()
+	if got == nil || got.UID != "waf" {
+		t.Fatalf("expired WAF cooldown should return to normal selection, got %+v", got)
+	}
+}
+
 func TestFallbackAllHardReturnsNil(t *testing.T) {
 	// 全 hard 冷却 → 无软冷却/熔断号可兜底 → 返回 nil。
 	p := New("")

@@ -328,7 +328,10 @@ async function loadModels() {
     tb.innerHTML = list.map(m => {
       const eff = (m.supported_efforts || []).slice();
       if (m.can_disable_thinking && eff.length && !eff.includes('off')) eff.push('off（可关）');
-      const effs = eff.length ? eff.map(e => '<span class="tag warn">' + esc(e) + '</span>').join(' ')
+      const fixedEffort = eff.length === 1 && m.default_effort === eff[0] && !m.can_disable_thinking;
+      const effs = fixedEffort
+        ? '<span style="color:var(--ink-3);font-size:12.5px">固定档 · 默认 ' + esc(eff[0]) + '</span>'
+        : eff.length ? eff.map(e => '<span class="tag warn">' + esc(e) + '</span>').join(' ')
         : '<span style="color:var(--ink-3);font-size:12.5px">' + (m.supports_reasoning ? '固定档 · 默认 ' + esc(m.default_effort || '?') : '不支持思考') + '</span>';
       // 能力徽标：默认模型 / 工具调用 / 视觉 / 纯推理（上游目录全字段透出，缺失不显示）
       const caps = [];

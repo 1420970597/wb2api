@@ -2,6 +2,7 @@
 package pool
 
 import (
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 // reason（"429 rate limit" / "waf 403 block" / "余额不足"）共用一个字段，
 // 运维在 /status 一处即可看到「为什么被降权/冷却」，不新增台账字段。
 const degradeReason = "consecutive failures"
+
+// wafBlockReasonPrefix is written by the server when the upstream returns its
+// HTML WAF block page. It remains a pool-level detail so fallback selection
+// can protect a cooled account without importing the server package.
+const wafBlockReasonPrefix = "waf 403 block"
 
 type CoolKind int
 
@@ -257,6 +263,17 @@ func (e *entry) healthy(now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// wafCooled reports an active account-level WAF cooldown. Unlike an ordinary
+// soft rate cooldown, retrying this state before its expiry is known to be
+// harmful: it sends the same account and gateway egress back to the firewall.
+// It is deliberately checked only by the all-cooled fallback; normal healthy
+// selection already rejects every active cooldown.
+func (e *entry) wafCooled(now time.Time) bool {
+	return e.coolKind == CoolSoft &&
+		!e.until.IsZero() && now.Before(e.until) &&
+		strings.HasPrefix(e.reason, wafBlockReasonPrefix)
 }
 
 // modelExempt 报告账号是否处于「6004 模型级软冷却」形态：存在任一有效的 6004

@@ -561,6 +561,12 @@ type Client struct {
 	// 空 = 旧行为：X-Product="SaaS"，不设 X-IDE-*（向后兼容，不突变归因）。
 	ClientName string
 
+	// LegacyProfile uses the observable chat identity of the bundled Windows
+	// wb2api.exe: its legacy User-Agent, SaaS attribution, and no synthetic
+	// X-Machine-ID/X-Session-ID headers. It does not alter credentials, routes,
+	// or request bodies.
+	LegacyProfile bool
+
 	// PassthroughIP 是否透传客户端 IP 给上游（X-Forwarded-For/X-Real-IP 首段）。
 	// 缺省 false（反代安全边界）；handler 在 chat 路径按请求把 clientIP 传入 ChatStream。
 	PassthroughIP bool

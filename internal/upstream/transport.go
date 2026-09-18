@@ -7,8 +7,11 @@ package upstream
 
 import (
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -79,6 +82,41 @@ func newTransport() *http.Transport {
 		IdleConnTimeout:       idleConnTimeout,
 		ResponseHeaderTimeout: responseHeaderTimeout,
 	}
+}
+
+// SetProxyURL configures the shared outbound HTTP(S) proxy before requests
+// begin. An empty value restores direct connections. Proxy credentials remain
+// inside the parsed URL and are never logged by this package.
+func (c *Client) SetProxyURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	var proxy func(*http.Request) (*url.URL, error)
+	if raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("proxy_url must be an absolute http(s) URL")
+		}
+		proxy = http.ProxyURL(u)
+	}
+
+	transports := map[*http.Transport]struct{}{}
+	for _, hc := range []*http.Client{c.HTTP, c.ChatHTTP} {
+		if hc == nil {
+			continue
+		}
+		tr, ok := hc.Transport.(*http.Transport)
+		if !ok || tr == nil {
+			return errors.New("upstream HTTP client does not use a standard transport")
+		}
+		transports[tr] = struct{}{}
+	}
+	if len(transports) == 0 {
+		return errors.New("upstream HTTP clients are not configured")
+	}
+	for tr := range transports {
+		tr.Proxy = proxy
+		tr.CloseIdleConnections()
+	}
+	return nil
 }
 
 // closeIdler 实现该接口的 RoundTripper 支持清空空闲连接池（*http.Transport、

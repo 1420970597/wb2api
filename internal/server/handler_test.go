@@ -481,6 +481,24 @@ func TestApplyErrorPolicySoftRateExponentialBackoff(t *testing.T) {
 	}
 }
 
+func TestApplyErrorPolicyWAFUsesLongCooldown(t *testing.T) {
+	// WAF 403 没有可靠的 Retry-After 时，短至一分钟的半开探测会持续触发上游
+	// 拦截页。首轮等待应为 10m 的抖动区间，并作为普通 soft cooldown 持久化。
+	p := pool.New("")
+	p.Add(&auth.Auth{UID: "u1"})
+	h := NewHandler(Config{Pool: p})
+	h.applyErrorPolicy("u1", upstream.ErrWafBlock, "", "", nil)
+	st, _ := p.Status("u1")
+	if !st.Cooling || st.CoolKind != "soft_rate" || st.Reason != "waf 403 block" {
+		t.Fatalf("WAF should create a soft WAF cooldown: %+v", st)
+	}
+	// jitterDur(10m) falls in [7m30s, 12m30s]. Status rounds down seconds.
+	if st.CoolRemaining < int64((7*time.Minute+29*time.Second)/time.Second) ||
+		st.CoolRemaining > int64((12*time.Minute+30*time.Second)/time.Second) {
+		t.Fatalf("WAF cooldown=%ds want jittered 10m window", st.CoolRemaining)
+	}
+}
+
 func TestApplyErrorPolicyNotFoundUsesFixedBase(t *testing.T) {
 	// 404 分流：偶发上游 404 的冷却基数固定 60s（notFoundCooldown），不取 soft_rate
 	// 的 600s 基数，也不受其配置值影响。Cooldown 重构后 404 是固定时长冷却
@@ -973,6 +991,48 @@ func TestModelsDynamic(t *testing.T) {
 	dynamicModelsCache.RUnlock()
 	if cached != 3 {
 		t.Errorf("cache not populated: %d", cached)
+	}
+}
+
+func TestModelsEndpointIncludesGlobalTargetCatalog(t *testing.T) {
+	auth.SetGlobalEnabled(true)
+	t.Cleanup(func() { auth.SetGlobalEnabled(true) })
+
+	up := upstream.New()
+	up.ChatBaseGlobal = "https://fake.example"
+	up.HTTP = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"code":500,"msg":"unavailable"}`)),
+		}, nil
+	})}
+	p := testPoolWith(&auth.Auth{UID: "global-1", AccessToken: "at", Domain: "www.workbuddy.ai", ExpiresAt: 9999999999})
+	h := NewHandler(Config{Pool: p, Upstream: up, GlobalEnabled: true})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data []struct {
+			ID              string `json:"id"`
+			ContextLength   int64  `json:"context_length"`
+			MaxOutputTokens int64  `json:"max_output_tokens"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 19 {
+		t.Fatalf("model count=%d want 19", len(resp.Data))
+	}
+	if resp.Data[0].ID != "global:default-model" || resp.Data[len(resp.Data)-1].ID != "global:deepseek-v4.1-flash" {
+		t.Fatalf("model order starts=%q ends=%q", resp.Data[0].ID, resp.Data[len(resp.Data)-1].ID)
+	}
+	last := resp.Data[len(resp.Data)-1]
+	if last.ContextLength != 1000000 || last.MaxOutputTokens != 128000 {
+		t.Errorf("deepseek fields=%+v", last)
 	}
 }
 

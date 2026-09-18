@@ -38,8 +38,10 @@
     "client_version": "",
     "cli_version": "",
     "client_name": "",
+    "legacy_profile": false,
     "device_token": "",
     "device_token_file": "",
+    "proxy_url": "",
     "passthrough_ip": false
   },
   "features": {

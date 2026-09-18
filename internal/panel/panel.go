@@ -258,21 +258,37 @@ func (p *Panel) logsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"entries": p.logs.Snapshot()})
 }
 
-// models 实时查询上游模型列表与 reasoning 实际档位（直连上游，不读路由层 1h 缓存）：
-// 回答"该模型到底支持哪几档思考"。顺带刷新 client 的 effort 降级能力缓存。
-// 无可用账号 503（先添加账号）；上游失败 502。
+// models 优先读取 global 账号的目标 19 模型目录；没有 global 账号时才读取 CN。
+// 面板表格不展示 realm 前缀，混合两域会造成同名模型和实际路由的歧义。
 func (p *Panel) models(w http.ResponseWriter, r *http.Request) {
-	acct := p.cfg.Pool.Pick()
-	if acct == nil {
-		writeErr(w, http.StatusServiceUnavailable, "没有可用账号：请先在面板添加账号再查询")
+	if p.cfg.Pool == nil || p.cfg.Upstream == nil {
+		writeErr(w, http.StatusServiceUnavailable, "模型服务尚未初始化")
 		return
 	}
-	infos, err := p.cfg.Upstream.FetchModels(acct)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "fetch models: "+err.Error())
+	out := make([]map[string]any, 0)
+	var cnErr error
+	if acct := p.cfg.Pool.PickExcludingForRealm(nil, "", "global"); acct != nil {
+		out = appendModelEntries(out, p.cfg.Upstream.FetchGlobalModelInfos(acct), "global", p.cfg.Upstream)
+	} else if acct := p.cfg.Pool.PickExcludingForRealm(nil, "", "cn"); acct != nil {
+		infos, err := p.cfg.Upstream.FetchModels(acct)
+		if err != nil {
+			cnErr = err
+		} else {
+			out = appendModelEntries(out, infos, "cn", p.cfg.Upstream)
+		}
+	}
+	if len(out) == 0 {
+		if cnErr != nil {
+			writeErr(w, http.StatusBadGateway, "fetch models: "+cnErr.Error())
+		} else {
+			writeErr(w, http.StatusServiceUnavailable, "没有可用账号：请先在面板添加账号再查询")
+		}
 		return
 	}
-	out := make([]map[string]any, 0, len(infos))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": out})
+}
+
+func appendModelEntries(out []map[string]any, infos []upstream.ModelInfo, realm string, client *upstream.Client) []map[string]any {
 	for _, mi := range infos {
 		entry := map[string]any{
 			"id":                   mi.ID,
@@ -295,15 +311,11 @@ func (p *Panel) models(w http.ResponseWriter, r *http.Request) {
 		if mi.MaxAllowedSize > 0 {
 			entry["max_allowed_size"] = mi.MaxAllowedSize
 		}
-		// 与 /v1/models 同口径：context_length / max_output_tokens 走四级查找链
-		// （上游动态值 → 静态知识表 → model.json → models.dev → 1M 兜底），
-		// effort 档位走 EffortListing（远端权威 ∪ CN 静态兜底表）——面板展示的
-		// 数值即客户端实际拿到的数值，两侧不再漂移。
-		entry["context_length"] = upstream.ContextWindowListingV4(mi.ID, mi.ContextWindow, p.cfg.Upstream.HTTP)
-		if mo, ok := upstream.MaxOutputTokensListingV4(mi.ID, mi.MaxTokens, p.cfg.Upstream.HTTP); ok {
+		entry["context_length"] = upstream.ContextWindowListingV4(mi.ID, mi.ContextWindow, client.HTTP)
+		if mo, ok := upstream.MaxOutputTokensListingV4(mi.ID, mi.MaxTokens, client.HTTP); ok {
 			entry["max_output_tokens"] = mo
 		}
-		if efforts, def := upstream.EffortListing("cn", mi.ID, mi.Efforts, mi.DefaultEffort); efforts != nil {
+		if efforts, def := upstream.EffortListing(realm, mi.ID, mi.Efforts, mi.DefaultEffort); efforts != nil {
 			entry["supported_efforts"] = efforts
 			if def != "" {
 				entry["default_effort"] = def
@@ -311,7 +323,7 @@ func (p *Panel) models(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": out})
+	return out
 }
 
 // modelProbes 返回模型输出上限的探测结果（scripts/probe_max_tokens.py --panel-out

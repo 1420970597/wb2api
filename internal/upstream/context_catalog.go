@@ -38,6 +38,13 @@ type contextCap struct {
 // 每条注释标注来源：实测 = fork 706412584 直连 CN /console 实测 maxInputTokens
 // （global 侧为同 id 外推）；models.dev = 2026-09-16 收录共识值；估算 = 同族外推。
 var contextCapFallback = map[string]contextCap{
+	// ---- WorkBuddy global 路由模型 ----
+	"default-model":  {context: 176000, maxOutput: 24000},
+	"fast-model":     {context: 200000, maxOutput: 32000},
+	"balanced-model": {context: 256000, maxOutput: 32000},
+	"primary-model":  {context: 272000, maxOutput: 72000},
+	"deep-model":     {context: 176000, maxOutput: 24000},
+
 	// ---- GLM 家族（z-ai）----
 	"glm-5.2":       {context: 1000000, maxOutput: 131072}, // 实测（CN 1M；models.dev 共识 1M/131072）
 	"glm-5.1":       {context: 200000, maxOutput: 131072},  // 实测（CN 200K；models.dev 共识 200K/131072）

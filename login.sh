@@ -10,6 +10,9 @@
 #   3. 回到这里按 y → poll 拿 token+uid+nickname → 签到 → 落盘 auths/workbuddy-<uid>.json
 #   4. 重启 workbuddy2api 容器加载新账号
 set -euo pipefail
+# Auth files contain refresh tokens. New files must be private even before the
+# Docker entrypoint gets a chance to normalize mounted-directory permissions.
+umask 077
 
 cd "$(dirname "$0")"
 AUTH_DIR="./auths"

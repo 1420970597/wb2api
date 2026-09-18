@@ -23,6 +23,9 @@ const (
 
 	originRefererCN     = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
+	// legacyUserAgent is the chat User-Agent embedded in the Windows wb2api.exe
+	// build identified by its Go 1.26.1 build metadata.
+	legacyUserAgent = "CLI/2.63.2 CodeBuddy/2.63.2"
 )
 
 // originRefererFor 按账号 realm 返回 Origin/Referer 基础域：
@@ -78,6 +81,9 @@ func (c *Client) defaultWorkBuddyUA() string {
 func (c *Client) userAgent(a *auth.Auth) string {
 	if c != nil && c.UserAgent != "" {
 		return c.UserAgent
+	}
+	if c != nil && c.LegacyProfile {
+		return legacyUserAgent
 	}
 	return c.defaultWorkBuddyUAFor(a)
 }
@@ -159,10 +165,11 @@ func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	// Accept-Language 按 realm 切（D5）：CN zh-CN，global en-US。官方客户端按账号域
 	// 发对应语言标识，对齐避免上游风控按语言缺失误判。
 	req.Header.Set("Accept-Language", acceptLanguageFor(a))
-	// X-Machine-ID / X-Session-ID：按 uid 稳定派生的账号级设备头（见
-	// injectAccountStableHeaders）。注入在 CommonHeaders——chat 经 ChatHeaders
-	// 叠加 CommonHeaders 天然继承；billing 域另行注入，全出站覆盖。
-	c.injectAccountStableHeaders(req, a)
+	// LegacyProfile 对齐旧 Windows 可执行文件：其请求没有这两个由网关派生的
+	// 设备头。其余请求头仍按原逻辑构造。
+	if c == nil || !c.LegacyProfile {
+		c.injectAccountStableHeaders(req, a)
+	}
 }
 
 // acceptLanguageFor 按账号 realm 返回 Accept-Language：global → en-US，cn → zh-CN。
@@ -312,6 +319,9 @@ func validTraceID(s string) bool {
 // attributionClientName 生效的用量归属名：ClientName 非空取之；
 // 空默认 "WorkBuddy"（伪造官方桌面端指纹；显式配 "SaaS" 可还原旧行为）。
 func (c *Client) attributionClientName() string {
+	if c != nil && c.LegacyProfile {
+		return "SaaS"
+	}
 	if c != nil && c.ClientName != "" {
 		return c.ClientName
 	}

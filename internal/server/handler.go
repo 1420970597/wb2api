@@ -418,6 +418,11 @@ func (h *Handler) fetchGlobalModels() ([]string, *auth.Auth) {
 // 拉取失败记录时间戳进入 5min 负缓存，冷却期内直接返回 nil（纯动态，无静态表兜底），
 // 避免反复打上游。只从 CN realm 账号拉取（global 走独立探测）。
 func (h *Handler) fetchDynamicModels() []upstream.ModelInfo {
+	// CN 目录缓存只属于 CN 域。必须先确认有可用 CN 账号，再读取缓存；否则
+	// global-only 部署会把同一进程此前缓存的 CN 模型错误混入 global: 目录。
+	if len(h.cfg.Pool.AvailableUIDsForRealm("cn")) == 0 {
+		return nil
+	}
 	dynamicModelsCache.RLock()
 	if len(dynamicModelsCache.ids) > 0 && time.Since(dynamicModelsCache.fetched) < dynamicModelsTTL {
 		out := dynamicModelsCache.ids
@@ -933,7 +938,7 @@ func rotateBackoff(i int, ctx context.Context) bool {
 //     非 6004 走账号级，均不指数堆加）；无重置时间才走有界退避。冷却时长优先采信
 //     Retry-After 头（uerr.RetryAfter，body 文案墙钟之外的头形态来源）。
 //   - ErrWafBlock → 账号级软冷却：**不 Disable**——WAF 403 是 IP/指纹维频控信号，
-//     罚过即走、到期自愈。时长优先 Retry-After 头；缺失按 wafCooldownBase(60s)
+//     罚过即走、到期自愈。时长优先 Retry-After 头；缺失按 wafCooldownBase(10m)
 //     起 · softStreak 指数、封顶 soft_rate_max 的既有 CooldownSoftRate 有界退避。
 //     基数经 jitterDur 抖动（防多账号同相位冷却到期再聚团）。
 //   - ErrNotFound → Cooldown(CoolSoft, notFoundCooldown 固定 60s)：短冷却防雪崩。
@@ -1059,12 +1064,13 @@ func writeOpenAIError(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
-// wafCooldownBase WAF 403 软冷却基数（建议 60s 起；抖动 ±25% 后落 [45s,75s]，
+// wafCooldownBase WAF 403 软冷却基数（10m 起；抖动 ±25% 后落 [7m30s,12m30s]，
 // 实际进入 CooldownSoftRate 后再按 softStreak 指数、封顶 soft_rate_max）。
 // 与 SoftCooldown 分流的原因：WAF 403 是 IP/指纹维频控，信号比 429「账号级限流」轻
-// （账号本身健康），但比 404 重（带粘性会连环）；60s 级的快速避让已足够让频控窗口
-// 滑过。抖动复用 backoff.go jitterDur（单一来源）。
-const wafCooldownBase = 60 * time.Second
+// （账号本身健康），但比 404 重且会连续触发。实测一分钟后仍被拦截，因此首轮
+// 避让至少十分钟；随后沿用 softStreak 指数退避、最多 soft_rate_max。抖动复用
+// backoff.go jitterDur（单一来源）。
+const wafCooldownBase = 10 * time.Minute
 
 // writeOpenAIErrorHint 同 writeOpenAIError，另在 error 对象上附加
 // error.gateway_hint（hint 为空串时不带字段——未覆盖形态不编造）。
